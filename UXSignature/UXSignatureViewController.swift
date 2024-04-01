@@ -5,6 +5,7 @@
 //  Created by Deepak Goyal on 11/03/24.
 //
 
+
 import UIKit
 
 protocol UXSignatureViewControllerDelegate: AnyObject{
@@ -36,6 +37,7 @@ class UXSignatureViewController: UIViewController{
         view.translatesAutoresizingMaskIntoConstraints = false
         view.backgroundColor = .clear
         view.pickerButton.tintColor = penColor
+        view.typesHStack.isHidden = watermark != nil
         return view
     }()
     
@@ -233,15 +235,15 @@ class UXSignatureViewController: UIViewController{
     /// Set watermark image
     var watermark: UIImage? {
         didSet{
-            signatureComponentsView.typesHStack.isHidden = watermark != nil
+            signatureComponentsView.typesHStack.isHidden = watermark != nil || isEraserHidden
             watermarkImage.image = watermark
         }
     }
     
     /// Set default sign image
-    var signImage: UIImage? {
+    var signedImage: UIImage? {
         didSet{
-            canvas.image = signImage
+            canvas.image = signedImage
         }
     }
     
@@ -249,6 +251,27 @@ class UXSignatureViewController: UIViewController{
     var canvasSize: CanvasSize = .fill{
         didSet{
             updateCanvasSize(canvasSize)
+        }
+    }
+    
+    /// Set size of sign image to be captured
+    var capturedImageSize: CanvasSize = .fill
+    
+    var isResetButtonHidden: Bool = false{
+        didSet{
+            signatureComponentsView.undoButton.isHidden = isResetButtonHidden
+        }
+    }
+    
+    var isPickerButtonHidden: Bool = false{
+        didSet{
+            signatureComponentsView.pickerButton.isHidden = isPickerButtonHidden
+        }
+    }
+    
+    var isEraserHidden: Bool = false {
+        didSet{
+            signatureComponentsView.typesHStack.isHidden = watermark != nil || isEraserHidden
         }
     }
     
@@ -275,7 +298,7 @@ class UXSignatureViewController: UIViewController{
     }
     
     private func captureSign() -> UIImage{
-
+        
         // Because in direct capture eraser color is visible on canvas and white lines of eraser is visible on view behind canvas.
         canvas.image = canvas.asImage
         
@@ -284,9 +307,13 @@ class UXSignatureViewController: UIViewController{
         
         watermarkContainer.isHidden = false
         drawingView.layer.cornerRadius = 0
-        let image = drawingView.asImage
+        var image = drawingView.asImage
         drawingView.layer.cornerRadius = 8
         watermarkContainer.isHidden = true
+        
+        // Resize capture image in expected size.
+        image = getResizedImage(size: capturedImageSize, image: image) ?? image
+        
         return image
     }
     
@@ -308,12 +335,16 @@ extension UXSignatureViewController: UXSignatureComponentsViewDelegate{
     
     func didTapPicker(){
         
-        let viewC = UIColorPickerViewController()
-        (viewC.presentationController as? UISheetPresentationController)?.detents = [.medium(), .large()]
-        (viewC.presentationController as? UISheetPresentationController)?.prefersGrabberVisible = true
-        viewC.selectedColor = penColor
-        viewC.delegate = self
-        present(viewC, animated: true)
+        if #available(iOS 14.0, *) {
+            let viewC = UIColorPickerViewController()
+            if #available(iOS 15.0, *) {
+                (viewC.presentationController as? UISheetPresentationController)?.detents = [.medium(), .large()]
+                (viewC.presentationController as? UISheetPresentationController)?.prefersGrabberVisible = true
+            }
+            viewC.selectedColor = penColor
+            viewC.delegate = self
+            present(viewC, animated: true)
+        }
     }
     
     func didTapCross() {
@@ -324,10 +355,12 @@ extension UXSignatureViewController: UXSignatureComponentsViewDelegate{
 //MARK: Color Picker
 extension UXSignatureViewController: UIColorPickerViewControllerDelegate{
     
+    @available(iOS 14.0, *)
     func colorPickerViewControllerDidFinish(_ viewController: UIColorPickerViewController) {
         penColor = viewController.selectedColor
     }
     
+    @available(iOS 14.0, *)
     func colorPickerViewControllerDidSelectColor(_ viewController: UIColorPickerViewController){
         penColor = viewController.selectedColor
     }
@@ -386,13 +419,14 @@ extension UXSignatureViewController{
     
     private func addConstraints(){
         
-
+        
         NSLayoutConstraint(item: contentVStack, attribute: .top, relatedBy: .equal, toItem: self.view, attribute: .topMargin, multiplier: 1, constant: 0).isActive = true
         NSLayoutConstraint(item: contentVStack, attribute: .leading, relatedBy: .equal, toItem: self.view, attribute: .leading, multiplier: 1, constant: 12).isActive = true
         NSLayoutConstraint(item: contentVStack, attribute: .trailing, relatedBy: .equal, toItem: self.view, attribute: .trailing, multiplier: 1, constant: -12).isActive = true
         NSLayoutConstraint(item: contentVStack, attribute: .bottom, relatedBy: .equal, toItem: self.view, attribute: .bottomMargin, multiplier: 1, constant: -8).isActive = true
         
         doneButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
+        
         
         NSLayoutConstraint(item: drawingView, attribute: .top, relatedBy: .greaterThanOrEqual, toItem: self.canvasContainer, attribute: .top, multiplier: 1, constant: 0).isActive = true
         NSLayoutConstraint(item: drawingView, attribute: .leading, relatedBy: .greaterThanOrEqual, toItem: self.canvasContainer, attribute: .leading, multiplier: 1, constant: 0).isActive = true
@@ -414,9 +448,10 @@ extension UXSignatureViewController{
         NSLayoutConstraint(item: canvas, attribute: .leading, relatedBy: .equal, toItem: self.drawingView, attribute: .leading, multiplier: 1, constant: 0).isActive = true
         NSLayoutConstraint(item: canvas, attribute: .trailing, relatedBy: .equal, toItem: self.drawingView, attribute: .trailing, multiplier: 1, constant: 0).isActive = true
         NSLayoutConstraint(item: canvas, attribute: .bottom, relatedBy: .equal, toItem: self.drawingView, attribute: .bottom, multiplier: 1, constant: 0).isActive = true
-
+        
         updateCanvasSize(canvasSize)
     }
+    
     
     private func updateCanvasSize(_ size: CanvasSize){
         
@@ -441,6 +476,37 @@ extension UXSignatureViewController{
             break
         }
     }
+    
+}
+private extension UXSignatureViewController{
+    
+    func getResizedImage(size: CanvasSize, image: UIImage?) -> UIImage?{
+        
+        switch size {
+        case .fixed(let width, let height):
+            return resizeImage(image: image, targetSize: CGSize(width: width, height: height))
+        case .fixedWidth(let width):
+            return resizeImage(image: image, targetSize: CGSize(width: width, height: drawingView.bounds.size.height))
+        case .fixedHeight(let height):
+            return resizeImage(image: image, targetSize: CGSize(width: drawingView.bounds.size.width, height: height))
+        default:
+            return image
+        }
+    }
+    
+    func resizeImage(image: UIImage?, targetSize: CGSize) -> UIImage? {
+        
+        let rect = CGRect(x: 0, y: 0, width: targetSize.width, height: targetSize.height)
+        
+        UIGraphicsBeginImageContextWithOptions(targetSize, false, 0.0)
+        
+        image?.draw(in: rect)
+        let newImage = UIGraphicsGetImageFromCurrentImageContext()
+        
+        UIGraphicsEndImageContext()
+        
+        return newImage
+    }
 }
 extension UIView{
     
@@ -451,3 +517,4 @@ extension UIView{
         }
     }
 }
+
